@@ -172,14 +172,44 @@ class EmbeddingBias(nn.Module):
     def forward(self, x):
         return self.bias[x]
 
-def prepare_streaming_dataset(tokenizer, dataset_name, max_length, batch_size, num_datapoints=None, num_cpu_cores=6):
+class TokenizedDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_name, tokenizer, name= None, batch_size=1, max_length=128, total_batches=None):
+        self.batch_size = batch_size
+        self.dataset_name = dataset_name
+        self.name = name
+        self.max_length = max_length
+        self.tokenizer = tokenizer
+        self.total_batches= total_batches
+        d = load_dataset(dataset_name, name, split='train', streaming=True)
+        self.dataset = d.map(lambda x: tokenizer(x["text"])).filter(
+            lambda x: len(x["input_ids"]) >= max_length).map(
+            lambda x: {"input_ids": x["input_ids"][:max_length]},
+            )
+        self.dataset_iterator = iter(self.dataset)
+
+    def reset_iterator(self):
+        self.dataset_iterator = iter(self.dataset)
+
+    def next(self):
+      batches = []
+      try:
+          while len(batches) < self.batch_size:
+              batch = next(self.dataset_iterator)
+              batches.append(batch)
+          # return_batch_size amount of iterables in a torch tensor
+          return torch.stack([torch.tensor(batch["input_ids"]) for batch in batches])
+      except StopIteration:
+          return None
+
+
+def prepare_streaming_dataset(tokenizer, dataset_name, max_length, batch_size, num_datapoints=None, num_cpu_cores=6, name=None):
     """Create a generator that streams batches from the dataset"""
     split = "train"
     split_text = f"{split}[:{num_datapoints}]" if num_datapoints else split
     
     # Load the dataset
     # dataset = load_dataset(dataset_name, split=split_text, streaming=True)
-    dataset = load_dataset(dataset_name, split=split_text)
+    dataset = load_dataset(dataset_name, name=name, split=split_text)
     current_batch = []
     
     def process_text(text):

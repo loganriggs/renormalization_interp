@@ -3,47 +3,62 @@ import torch
 from utils import *
 # Example usage:
 from transformers import AutoModelForCausalLM, AutoTokenizer
-model_name = "gpt2"
+# model_name = "gpt2"
+model_name = "HuggingFaceTB/SmolLM-360M"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
 tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+
 tokenizer.add_bos_token = True
-batch_size = 512
+# batch_size = 512
 # batch_size = 32
-# batch_size = 128
+batch_size = 128
 max_length = 128
 learning_rate = 1e-3
-target_layer = 'transformer.h.5'
-
-dataset_name = "Elriggs/openwebtext-100k"
+if(model_name == "gpt2"):
+    target_layer = 'transformer.h.5'
+    d_name = None
+else: 
+    target_layer = "model.layers.20"
+    d_name = "cosmopedia-v2"
 # dataset_name = "prithivMLmods/OpenWeb888K"
-def redo_data(num_datapoints=None, batch_size=128, max_length=128):
-    data_generator = prepare_streaming_dataset(
-        tokenizer=tokenizer,
-        dataset_name=dataset_name,
-        max_length=max_length,
-        batch_size=batch_size,
-        num_datapoints=num_datapoints,  # Optional: limit number of datapoints
-    )
-    return data_generator
+# def redo_data(num_datapoints=None, batch_size=128, max_length=128, dataset_specific_name=None):
+#     data_generator = prepare_streaming_dataset(
+#         tokenizer=tokenizer,
+#         dataset_name=dataset_name,
+#         max_length=max_length,
+#         batch_size=batch_size,
+#         num_datapoints=num_datapoints,  # Optional: limit number of datapoints
+#         name = dataset_specific_name,
+#     )
+#     return data_generator
 
 debug = False
 if(debug):
-    dataset_name = "Elriggs/openwebtext-100k"
+    if(model_name == "gpt2"):
+        dataset_name = "Elriggs/openwebtext-100k"
+    else: 
+        dataset_name = "HuggingFaceTB/smollm-corpus"
     # num_datapoints = 100_000
     num_datapoints = 1_000
     total_batches = num_datapoints // batch_size
     print(f"total amount of tokens in dataset: {num_datapoints * max_length / 1e6}M")
-else:
-    dataset_name = "prithivMLmods/OpenWeb888K"
-    num_datapoints = None # 880_000
-    total_batches = 888_000 // batch_size
-    print(f"total amount of tokens in dataset: {880_000 * max_length / 1e6}M")
+else:    
+    if(model_name == "gpt2"):
+        dataset_name = "prithivMLmods/OpenWeb888K"
+        num_datapoints = None # 880_000
+        total_batches = 888_000 // batch_size
+    else: 
+        dataset_name = "HuggingFaceTB/smollm-corpus"
+        num_datapoints = 2_000_000
+        total_batches = num_datapoints // batch_size
+        print(f"total amount of tokens in dataset: {num_datapoints * max_length / 1e6}M")
 
-data_generator = redo_data(num_datapoints=num_datapoints, batch_size=batch_size)
+# data_generator = redo_data(num_datapoints=num_datapoints, batch_size=batch_size, dataset_specific_name=d_name)
 
-
+data_generator = TokenizedDataset(dataset_name, tokenizer, d_name, batch_size=batch_size, max_length=max_length, total_batches=total_batches)
 # %%
 import wandb
 from dataclasses import dataclass
@@ -134,8 +149,9 @@ def train_with_biases(
         print("tqdm total batches not provided, using made-up value of 10k")
 
     total_tokens_processed = 0
-    for batch_idx, batch in enumerate(tqdm(data_generator, total=total_batches)):
-        input_ids = batch.to(device)
+    for batch_idx in tqdm(range(data_generator.total_batches)):
+    # for batch_idx, batch in enumerate(tqdm(data_generator, total=total_batches)):
+        input_ids = data_generator.next().to(device)
         
         # Get original outputs
         with torch.no_grad():
@@ -237,6 +253,8 @@ def train_with_biases(
             # fvu = calculate_fvu(x_rearranged.detach(), x_hat.detach())
             # all_fvus.append(fvu.item())
         
+        if total_tokens_processed > 60_000_000:
+            cfg.norm_decoder = False
 
         with torch.no_grad():            
             if batch_idx % log_every == 0:
@@ -305,7 +323,7 @@ def run_all_configurations(
     # for use_embedding in [True, False]:
     optimizer = "Adam8bit"
     for use_embedding in [True]:
-        for tokens_to_combine in [1, 2, 4, 8, 16, 32, 64, 128]:
+        for tokens_to_combine in [2, 4, 8, 16, 32, 64, 128]:
         # for tokens_to_combine in [16, 4, 2, 8, 32, 64]:
         # for tokens_to_combine in [1]:
             # for optimizer in ["Adam8bit"]:
@@ -334,7 +352,8 @@ def run_all_configurations(
     all_results = {}
     for cfg in all_configs:
         model_save_name = f"rand_MLP_tokBias={cfg.use_embedding}"
-        model_save_name = f"seqComb={cfg.tokens_to_combine}_tokBias={cfg.use_embedding}_shiftWindow={cfg.shift_window}BatchStyle_k={cfg.k}"
+        # model_save_name = f"seqComb={cfg.tokens_to_combine}_tokBias={cfg.use_embedding}_shiftWindow={cfg.shift_window}BatchStyle_k={cfg.k}"
+        model_save_name = f"seqComb={cfg.tokens_to_combine}_tokBias={cfg.use_embedding}_shiftWindow={cfg.shift_window}BatchStyle_k={cfg.k}_undecode"
         wandb.init(
             project=wandb_project_name,
             name=model_save_name,
@@ -347,9 +366,13 @@ def run_all_configurations(
         # Log the batch size
         wandb.config.update({"batch_size": batch_size})
 
-        data_generator = redo_data(num_datapoints=num_datapoints, batch_size=batch_size, max_length=max_length)
+        # data_generator = redo_data(num_datapoints=num_datapoints, batch_size=batch_size, max_length=max_length, dataset_specific_name=d_name)
+        data_generator.reset_iterator()
         print(f"\nTraining with config: {cfg}")
-        embedding_bias = EmbeddingBias(model.transformer.wte).to(device)
+        if(model_name == "gpt2"):
+            embedding_bias = EmbeddingBias(model.transformer.wte).to(device)
+        else:
+            embedding_bias = EmbeddingBias(model.model.embed_tokens).to(device)
         sae = AutoEncoderTopK(activation_dim=d_model*cfg.tokens_to_combine, dict_size=d_model*dict_scalar, k=cfg.k).to(device)
         sae.per_token_bias = embedding_bias
             
@@ -414,10 +437,14 @@ def run_all_configurations(
 
 
 # %%
+if(model_name == "gpt2"):
+    d_model = 768
+else:
+    d_model = 960
 results = run_all_configurations(
     model=model,
     data_generator=data_generator,
-    d_model=768,
+    d_model=d_model,
     dict_scalar=16,
     k=30,
     device=device,
