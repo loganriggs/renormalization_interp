@@ -4,7 +4,9 @@ from utils import *
 # Example usage:
 from transformers import AutoModelForCausalLM, AutoTokenizer
 # model_name = "gpt2"
-model_name = "HuggingFaceTB/SmolLM-360M"
+# model_name = "HuggingFaceTB/SmolLM-360M"
+model_name = "HuggingFaceTB/SmolLM-135M"
+m_name_save= model_name.replace("/", "_")
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
@@ -21,7 +23,7 @@ if(model_name == "gpt2"):
     target_layer = 'transformer.h.5'
     d_name = None
 else: 
-    target_layer = "model.layers.20"
+    target_layer = "model.layers.18"
     d_name = "cosmopedia-v2"
 # dataset_name = "prithivMLmods/OpenWeb888K"
 # def redo_data(num_datapoints=None, batch_size=128, max_length=128, dataset_specific_name=None):
@@ -323,9 +325,9 @@ def run_all_configurations(
     # for use_embedding in [True, False]:
     optimizer = "Adam8bit"
     for use_embedding in [True]:
-        for tokens_to_combine in [2, 4, 8, 16, 32, 64, 128]:
+        # for tokens_to_combine in [2, 4, 8, 16, 32, 64, 128]:
         # for tokens_to_combine in [16, 4, 2, 8, 32, 64]:
-        # for tokens_to_combine in [1]:
+        for tokens_to_combine in [1]:
             # for optimizer in ["Adam8bit"]:
             cfg = DotDict({
                 'd_model': d_model, 
@@ -339,9 +341,9 @@ def run_all_configurations(
                 "max_length": max_length,
                 "optimizer": optimizer,
                 "batch_size": batch_size,
-                "shift_window": True,
+                "shift_window": False,
                 "rand_mlp": False,
-                "scale_num_features": True,
+                "scale_num_features": False,
 
             })
             if(cfg.scale_num_features):
@@ -351,9 +353,10 @@ def run_all_configurations(
 
     all_results = {}
     for cfg in all_configs:
-        model_save_name = f"rand_MLP_tokBias={cfg.use_embedding}"
+        model_save_name = f"sae_k={cfg.k}_tokBias={cfg.use_embedding}" 
+        # model_save_name = f"rand_MLP_tokBias={cfg.use_embedding}" 
         # model_save_name = f"seqComb={cfg.tokens_to_combine}_tokBias={cfg.use_embedding}_shiftWindow={cfg.shift_window}BatchStyle_k={cfg.k}"
-        model_save_name = f"seqComb={cfg.tokens_to_combine}_tokBias={cfg.use_embedding}_shiftWindow={cfg.shift_window}BatchStyle_k={cfg.k}_undecode"
+        # model_save_name = f"seqComb={cfg.tokens_to_combine}_tokBias={cfg.use_embedding}_shiftWindow={cfg.shift_window}BatchStyle_k={cfg.k}_undecode"
         wandb.init(
             project=wandb_project_name,
             name=model_save_name,
@@ -375,6 +378,9 @@ def run_all_configurations(
             embedding_bias = EmbeddingBias(model.model.embed_tokens).to(device)
         sae = AutoEncoderTopK(activation_dim=d_model*cfg.tokens_to_combine, dict_size=d_model*dict_scalar, k=cfg.k).to(device)
         sae.per_token_bias = embedding_bias
+        print(sae.encoder.weight.shape)
+        print(embedding_bias.bias.shape)
+        print('---------------------')
             
         if(cfg.rand_mlp):
             mlp = MLP(d_model=cfg.d_model, d_hidden=cfg.d_model*4).to(device)
@@ -423,7 +429,7 @@ def run_all_configurations(
             save_dir=save_dir,
             model_save_path=model_save_path,
             cfg_save_path=cfg_save_path,
-            hf_repo_id=f"Elriggs/seq_concat_{model_name}_{target_layer}"  # Replace with your actual repo
+            hf_repo_id=f"Elriggs/seq_concat_{m_name_save}_{target_layer}"  # Replace with your actual repo
         )
 
         # Save the rand_mlp weights
@@ -440,7 +446,8 @@ def run_all_configurations(
 if(model_name == "gpt2"):
     d_model = 768
 else:
-    d_model = 960
+    print(model.model.embed_tokens.weight.shape)
+    d_model = model.model.embed_tokens.weight.shape[-1]
 results = run_all_configurations(
     model=model,
     data_generator=data_generator,
