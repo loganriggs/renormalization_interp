@@ -77,7 +77,7 @@ class AutoEncoderTopK(nn.Module):
     be stored in the same shape as the encoder.
     """
 
-    def __init__(self, activation_dim: int, dict_size: int, k: int, data_mean = None, tokens_to_combine=None):
+    def __init__(self, activation_dim: int, dict_size: int, k: int, data_mean = None, tokens_to_combine=None, embedding=None):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
@@ -92,6 +92,8 @@ class AutoEncoderTopK(nn.Module):
         self.set_decoder_norm_to_unit_norm()
 
         self.b_dec = nn.Parameter(torch.zeros(activation_dim))
+        self.per_token_bias = embedding
+
 
     def encode(self, x: torch.Tensor, return_topk: bool = False):
         post_relu_feat_acts_BF = nn.functional.relu(self.encoder(x - self.b_dec))
@@ -141,14 +143,21 @@ class AutoEncoderTopK(nn.Module):
             "d_sae, d_in d_sae -> d_in d_sae",
         )
 
-    def from_pretrained(path, k: int, device=None):
+    def from_pretrained(path, k: int, device=None, embedding=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = torch.load(path, weights_only=True, map_location='cpu')
         dict_size, activation_dim = state_dict["encoder.weight"].shape
+        if 'per_token_bias.bias' in state_dict:
+            num_tokens, d_model = state_dict["per_token_bias.bias"].shape
+            embedding = EmbeddingBias(nn.Embedding(num_tokens, d_model))
+            del state_dict["per_token_bias.bias"]
+        else: 
+            embedding = None
         autoencoder = AutoEncoderTopK(activation_dim, dict_size, k)
         autoencoder.load_state_dict(state_dict)
+        autoencoder.per_token_bias = embedding
         if device is not None:
             autoencoder.to(device)
         return autoencoder
