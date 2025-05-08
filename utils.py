@@ -7,6 +7,7 @@ from tqdm import tqdm
 import einops
 from einops import rearrange
 from huggingface_hub import HfApi, create_repo, login
+import numpy as np
 
 def push_sae_to_huggingface(
     save_dir,
@@ -184,18 +185,21 @@ class EmbeddingBias(nn.Module):
         return self.bias[x]
 
 class TokenizedDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset_name, tokenizer, name= None, batch_size=1, max_length=128, total_batches=None):
+    def __init__(self, dataset_name, tokenizer, name= None, batch_size=1, max_length=128, total_batches=None, shuffle_seed=None):
         self.batch_size = batch_size
         self.dataset_name = dataset_name
         self.name = name
         self.max_length = max_length
         self.tokenizer = tokenizer
         self.total_batches= total_batches
-        d = load_dataset(dataset_name, name, split='train', streaming=True)
+        d = load_dataset(dataset_name, name, split="train", streaming=True)
+        if shuffle_seed is not None:
+            d = d.shuffle(seed=shuffle_seed)
         self.dataset = d.map(lambda x: tokenizer(x["text"])).filter(
             lambda x: len(x["input_ids"]) >= max_length).map(
             lambda x: {"input_ids": x["input_ids"][:max_length]},
             )
+        
         self.dataset_iterator = iter(self.dataset)
 
     def reset_iterator(self):
