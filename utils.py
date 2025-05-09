@@ -9,6 +9,86 @@ from einops import rearrange
 from huggingface_hub import HfApi, create_repo, login
 import numpy as np
 
+def calc_ce_loss(logits, batch, reduction="none"):
+    # first shift each by one. No ground truth for last token, no prediction for first token
+    shifted_logits = logits[:, :-1]  # Remove prediction for last token
+    shifted_targets = batch[:, 1:]   # Remove ground truth for first token
+    
+    batch_size, seq_len, vocab_size = shifted_logits.shape
+    #print batch size
+    
+
+    ce_loss = F.cross_entropy(
+        shifted_logits.contiguous().view(-1, shifted_logits.size(-1)),
+        shifted_targets.contiguous().view(-1),
+        reduction=reduction
+    )
+    ce_loss = ce_loss.view(batch_size, seq_len)
+    return ce_loss
+
+
+class TemperatureScheduler:
+    def __init__(self, 
+                 high_temp=1e-3,
+                 low_temp=0.0,
+                 start_high_fraction=0.2,  # First 20% at high temp
+                 end_high_fraction=0.6,    # High temp until 60% of training
+                 end_transition_fraction=0.8):  # Low temp from 80% to end
+        """
+        Temperature scheduler that controls noise injection during training.
+        
+        Args:
+            high_temp: The higher temperature value
+            low_temp: The lower temperature value (typically 0)
+            start_high_fraction: Fraction of training where temp reaches high_temp
+            end_high_fraction: Fraction of training where temp starts to decrease
+            end_transition_fraction: Fraction of training where temp reaches low_temp
+        """
+        self.high_temp = high_temp
+        self.low_temp = low_temp
+        self.start_high_fraction = start_high_fraction
+        self.end_high_fraction = end_high_fraction
+        self.end_transition_fraction = end_transition_fraction
+        self.current_state = None
+        
+    def get_temperature(self, current_step, total_steps):
+        """
+        Calculate the temperature for the current training step.
+        
+        Args:
+            current_step: Current training step (0-indexed)
+            total_steps: Total number of training steps
+            
+        Returns:
+            The temperature value for the current step
+        """
+        # Convert to fraction of total training
+        progress = current_step / total_steps
+        
+        # Phase 1: Ramp up from low_temp to high_temp
+        if progress < self.start_high_fraction:
+            self.current_state = "ramping_up"
+            # Linear interpolation from low_temp to high_temp
+            alpha = progress / self.start_high_fraction
+            return self.low_temp + (self.high_temp - self.low_temp) * alpha
+        
+        # Phase 2: Stay at high_temp
+        elif progress < self.end_high_fraction:
+            self.current_state = "high_temp"
+            return self.high_temp
+        
+        # Phase 3: Ramp down from high_temp to low_temp
+        elif progress < self.end_transition_fraction:
+            self.current_state = "ramping_down"
+            # Linear interpolation from high_temp back to low_temp
+            alpha = (progress - self.end_high_fraction) / (self.end_transition_fraction - self.end_high_fraction)
+            return self.high_temp - (self.high_temp - self.low_temp) * alpha
+        
+        # Phase 4: Stay at low_temp until the end
+        else:
+            self.current_state = "low_temp"
+            return self.low_temp
+
 def push_sae_to_huggingface(
     save_dir,
     model_save_path,
