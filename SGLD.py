@@ -25,14 +25,14 @@ if(model_name == "gpt2"):
 else: 
     target_layer = "model.layers.18"
     d_name = "cosmopedia-v2"
-debug = False
+debug = True
 if(debug):
     if(model_name == "gpt2"):
         dataset_name = "Elriggs/openwebtext-100k"
     else: 
         dataset_name = "HuggingFaceTB/smollm-corpus"
-    num_datapoints = 1_000_000
-    # num_datapoints = 400_000
+    # num_datapoints = 1_000_000
+    num_datapoints = 500_000
     # num_datapoints = 20_000
     # num_datapoints = 15_000
     # num_datapoints = 2_000
@@ -124,11 +124,6 @@ def save_validation_losses(orig_model, model, orig_sae, sae, batch_size, max_len
         val_new_ce_loss[start_idx:end_idx] = new_ce_loss # first token ignored by default
         all_activations[start_idx:end_idx] = new_x[:, 1:].cpu()
 
-        torch.save({
-            "ce_loss": val_new_ce_loss,
-            "all_activations": all_activations}, 
-            f"checkpoints/ce_loss_and_activations_{batch_idx}.pt"
-        )
         # Calc & Save the SAE features
         if(save_sae):
             with Trace(orig_model, target_layer) as original_trace:
@@ -153,35 +148,25 @@ def save_validation_losses(orig_model, model, orig_sae, sae, batch_size, max_len
             new_feature_acts[start_idx:end_idx] = custom_features[:, 1:].cpu()
         # feature_sim = update_feature_sim(feature_sim, per_feature_MSE, local_ids, num_features = post_relu_feat_acts_BF.shape[-1], batch_idx=batch_idx)
 
-            torch.save({
-                "original_feature_acts": original_feature_acts,
-                "new_feature_acts": new_feature_acts}, f"checkpoints/feature_sim_{batch_idx}.pt")
+    # Also do weight diff (l1)
+    w_orig = torch.nn.utils.parameters_to_vector(orig_model.parameters())
+    w_new = torch.nn.utils.parameters_to_vector(model.parameters())
+    w_diff = torch.norm(w_orig - w_new, p=1)
 
-    # save the feature_sim, original_feature_acts, new_feature_acts
-    # make  dir if not exists
+    torch.save({
+        "ce_loss": val_new_ce_loss,
+        "all_activations": all_activations,
+        "w_diff": w_diff
+        }, 
+        f"checkpoints/ce_loss_and_activations_{batch_idx}.pt"
+    )
+
     if(save_sae):
+        torch.save({
+            "original_feature_acts": original_feature_acts,
+            "new_feature_acts": new_feature_acts}, f"checkpoints/feature_sim_{batch_idx}.pt")
 
 
-# def update_feature_sim(feature_sim, per_feature_MSE, local_ids, num_features, batch_idx):
-#     # find out how many times each feature index shows up in local_ids
-#     num_features = post_relu_feat_acts_BF.shape[-1]
-#     # Get unique indices and their counts
-#     unique_indices, counts = torch.unique(local_ids, return_counts=True)
-
-#     unique_counts = torch.zeros(num_features, device=local_ids.device)
-#     unique_counts.index_put_((unique_indices,), counts.float())
-
-#     feature_mse_sum = torch.zeros(num_features, device=local_ids.device)
-#     feature_mse_sum.scatter_add_(0, local_ids.flatten(), per_feature_MSE.flatten())
-
-#     # Compute the average MSE for each feature by dividing by its count
-#     # (avoiding division by zero for features that don't appear)
-#     feature_mask = unique_counts > 0
-#     feature_mse_avg = torch.zeros_like(feature_mse_sum)
-#     feature_mse_avg[feature_mask] = feature_mse_sum[feature_mask] / unique_counts[feature_mask]
-
-#     feature_sim[batch_idx, unique_indices] = feature_mse_avg[unique_indices].to("cpu")
-#     return feature_sim
 
 def sub_bias_and_normalize(x, sae, batch, normalize=True):
     if normalize:
@@ -218,8 +203,8 @@ tempScheduler = TemperatureScheduler(
 # save_checkpoints_every = 10
 # batches_to_run = 10 #for validation
 # 93750 batchs
-save_checkpoints_every = 500
-batches_to_run = 200 #for validation
+save_checkpoints_every = 200
+batches_to_run = 50 #for validation
 
 
 from copy import deepcopy
@@ -251,7 +236,7 @@ for batch_idx in tqdm(range(total_batches)):
         new_x = original_trace.output[0] if isinstance(original_trace.output, tuple) else original_trace.output
         new_x = new_x.detach()
 
-    full_loss = ce_loss
+    full_loss = ce_loss/2
     full_loss.backward()
     current_opt.step()
 
