@@ -18,6 +18,9 @@ tokenizer.add_bos_token = True
 batch_size = 64
 max_length = 128
 
+save_checkpoints_every = 200
+batches_to_run = 50 #for validation
+
 # Handle datasets, activation layers, etc. for GPT2 vs SmolLM
 if(model_name == "gpt2"):
     target_layer = 'transformer.h.5'
@@ -31,8 +34,8 @@ if(debug):
         dataset_name = "Elriggs/openwebtext-100k"
     else: 
         dataset_name = "HuggingFaceTB/smollm-corpus"
-    # num_datapoints = 1_000_000
-    num_datapoints = 500_000
+    num_datapoints = 2_000_000
+    # num_datapoints = 500_000
     # num_datapoints = 20_000
     # num_datapoints = 15_000
     # num_datapoints = 2_000
@@ -203,8 +206,6 @@ tempScheduler = TemperatureScheduler(
 # save_checkpoints_every = 10
 # batches_to_run = 10 #for validation
 # 93750 batchs
-save_checkpoints_every = 200
-batches_to_run = 50 #for validation
 
 
 from copy import deepcopy
